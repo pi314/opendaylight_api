@@ -7,6 +7,7 @@ pp = pprint.PrettyPrinter(indent=2)
 
 __HOST = ''
 __COOKIE = ''
+debug = False
 
 def http_request (method, resource, param, headers):
     """Wrap http request procedure into one function.
@@ -18,11 +19,14 @@ def http_request (method, resource, param, headers):
             the function will output ``test'' instead of the full resource name.
     """
     global __HOST
+    global debug
     if method[0] == '%':
         quiet = True
         method = method[1:]
     else:
         quiet = False
+
+    if debug: quiet = False
 
     if not quiet:
         print('+===========================')
@@ -47,18 +51,97 @@ def http_request (method, resource, param, headers):
     conn.close()
     return response.status, response_headers, response_body
 
-def add_flow (flow_name, node_id, constrains, actions):
+def get_flow (node_id=None, flow_name=None):
+    global __COOKIE
+    if not node_id:
+        resource = '/controller/nb/v2/flowprogrammer/default'
+    elif not flow_name:
+        resource = '/controller/nb/v2/flowprogrammer/default/node/OF/' + node_id
+    else:
+        resource = '/controller/nb/v2/flowprogrammer/default/node/OF/' + node_id + '/staticFlow/' + flow_name
+
+    param = ''
+    headers = {
+        'Cookie': __COOKIE,
+        }
+    status, res_headers, res_body = http_request('%GET', resource, param, headers)
+    data = json.loads(res_body)
+
+    if not node_id or not flow_name:
+        if flow_name:
+            for i in data['flowConfig']:
+                if i['name'] == flow_name:
+                    return i
+        return data['flowConfig']
+    else:
+        # both node_id and flow_name are given, query result will not be a list
+        return data
+
+def add_flow (node_id, flow_name, constrains, actions, priority=500, active=True):
+    global __COOKIE
     resource = '/controller/nb/v2/flowprogrammer/default/node/OF/%s/staticFlow/%s' % (
         node_id, flow_name)
 
-    param = constrains
+    flow_data = get_flow(node_id, flow_name)
+    if flow_data == None:
+        flow_data = {}
+    flow_data.update( (key, value) for (key, value) in constrains.items())
+
+    if 'etherType' not in flow_data:
+        # This property is essential or controller responses 406 not acceptable
+        flow_data['etherType'] = '0x800'
+
+    # priority is not essential, but I give it a default value 500
+    if 'priority' not in flow_data:
+        flow_data['priority'] = priority
+
+    # installInHw is not essential, but I give it a default value True
+    if 'installInHw' not in flow_data:
+        flow_data['installInHw'] = ['false', 'true'][active]
+
+    flow_data['actions'] = actions
+    flow_data['name'] = flow_name
+    flow_data['node'] = {
+            'id': node_id,
+            'type': 'OF'
+        }
+    param = json.dumps(flow_data)
 
     headers = {
         'Content-Length': len(param),
         'Content-Type': 'application/json', # needed
-        'Cookie': cookie,
+        'Cookie': __COOKIE,
         }
+
     status, res_headers, res_body = http_request('PUT', resource, param, headers)
+    return status
+
+def toggle_flow (node_id, flow_name):
+    global __COOKIE
+    resource = '/controller/nb/v2/flowprogrammer/default/node/OF/%s/staticFlow/%s' % (
+        node_id, flow_name)
+    param = ''
+    headers = {
+        'Content-Length': len(param),
+        'Content-Type': 'application/json', # needed
+        'Cookie': __COOKIE,
+        }
+
+    status, res_headers, res_body = http_request('POST', resource, param, headers)
+    return status
+
+def remove_flow (node_id, flow_name):
+    global __COOKIE
+    resource = '/controller/nb/v2/flowprogrammer/default/node/OF/%s/staticFlow/%s' % (
+        node_id, flow_name)
+    param = ''
+    headers = {
+        'Content-Length': len(param),
+        'Content-Type': 'application/json', # needed
+        'Cookie': __COOKIE,
+        }
+
+    status, res_headers, res_body = http_request('DELETE', resource, param, headers)
     return status
 
 def login (host, username='admin', password='admin'):
@@ -133,7 +216,7 @@ def get_connector_list (node_id):
         'Cookie': __COOKIE,
         }
     param = ''
-    status, res_headers, res_body = http_request('GET connector list of switch ' + node_id,
+    status, res_headers, res_body = http_request('%GET connector list of switch ' + node_id,
         resource, param, headers)
     data = json.loads(res_body)
     return {i['nodeconnector']['id']:i['properties']['name']['value'] for i in data['nodeConnectorProperties']}
@@ -146,7 +229,7 @@ def get_switch_links ():
         'Cookie': __COOKIE,
         }
     param = ''
-    status, res_headers, res_body = http_request('GET test', resource, param, headers)
+    status, res_headers, res_body = http_request('%GET switch links', resource, param, headers)
     data = json.loads(res_body)
     return [
         (   i['edge']['headNodeConnector']['node']['id'],
@@ -205,8 +288,27 @@ def test ():
 
 def main ():
     global pp
-    print(login('192.168.179.129:8080'))
+    print('Login status:', login('192.168.179.129:8080'))
+    print('Topology:')
     pp.pprint( get_topo() )
+
+    print('Static flows:')
+    pp.pprint(get_flow())
+
+    node_id = '00:00:00:00:00:00:00:01'
+    flow_name = 'newFlow'
+    constrains = {  
+                    u'etherType': u'0x800',
+                    u'protocol': u'TCP'}
+    actions = ["CONTROLLER"]
+
+    #add_flow(node_id, flow_name, constrains, actions, 600, True)
+
+    constrains = {'protocol': 'UDP'}
+    actions = ["DROP"]
+    #add_flow(node_id, flow_name, constrains, actions, 700, False)
+    #toggle_flow(node_id, flow_name)
+    remove_flow(node_id, flow_name)
     #test()
 
 if __name__ == '__main__':
