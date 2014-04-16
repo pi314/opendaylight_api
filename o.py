@@ -138,6 +138,22 @@ def get_connector_list (node_id):
     data = json.loads(res_body)
     return {i['nodeconnector']['id']:i['properties']['name']['value'] for i in data['nodeConnectorProperties']}
 
+def get_switch_links ():
+    global __COOKIE
+    #resource = '/controller/nb/v2/switchmanager/default/node/OF/00:00:00:00:00:00:00:01'
+    resource = '/controller/nb/v2/topology/default'
+    headers = {
+        'Cookie': __COOKIE,
+        }
+    param = ''
+    status, res_headers, res_body = http_request('GET test', resource, param, headers)
+    data = json.loads(res_body)
+    return [
+        (   i['edge']['headNodeConnector']['node']['id'],
+            i['edge']['tailNodeConnector']['node']['id'],
+            i['properties']['name']['value']) for i in data['edgeProperties']
+        ]
+
 def get_topo ():
     global __COOKIE
 
@@ -146,13 +162,13 @@ def get_topo ():
 
     connector_list = {}
     for i in host_list:
-        if not i['switch'] in topo:
+        if i['switch'] not in topo:
             topo[ i['switch'] ] = {}
 
-        if not i['switch'] in connector_list:
+        if i['switch'] not in connector_list:
             connector_list[ i['switch'] ] = get_connector_list(i['switch'])
 
-        if not i['ip'] in topo[ i['switch'] ]:
+        if i['ip'] not in topo[ i['switch'] ]:
             topo[ i['switch'] ][ i['ip'] ] = {
                     'connector_id':  i['connector_id'],
                     'mac': i['mac'],
@@ -161,26 +177,37 @@ def get_topo ():
         for host in topo[sw]:
             topo[sw][host]['port'] = connector_list[sw][ topo[sw][host]['connector_id'] ]
             del(topo[sw][host]['connector_id'])
+
+    switch_links = get_switch_links()
+    for link in switch_links:
+        if link[0] not in topo:
+            topo[ link[0] ] = {}
+        topo[ link[0] ][ link[1] ] = {}
+        topo[ link[0] ][ link[1] ]['port'] = link[2]
+
     return topo
 
 def test ():
-    return
     global __COOKIE
-    resource = '/controller/nb/v2/switchmanager/default/node/OF/00:00:00:00:00:00:00:01'
+    #resource = '/controller/nb/v2/switchmanager/default/node/OF/00:00:00:00:00:00:00:01'
+    #resource = '/controller/nb/v2/topology/default'
+    resource = '/controller/nb/v2/switchmanager/default/nodes'
     headers = {
         'Cookie': __COOKIE,
         }
     param = ''
     status, res_headers, res_body = http_request('GET test', resource, param, headers)
     data = json.loads(res_body)
-    pp.pprint(data)
+    for i in data['nodeProperties']:
+        #pp.pprint(i)
+        print(i['node']['id'], i['properties']['macAddress']['value'])
+        print('')
 
 def main ():
     global pp
     print(login('192.168.179.129:8080'))
-    #print( get_host_list() )
     pp.pprint( get_topo() )
-    test()
+    #test()
 
 if __name__ == '__main__':
     main()
